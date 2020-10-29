@@ -28,16 +28,22 @@
 #include <TimerOne.h>
 
 //==============================================================
-//YOU CAN SKIP EFFECTS BY CHANGING THEIR CASE VALUE TO 999
+//YOU CAN SKIP EFFECTS BY CHANGING THEIR CASE VALUE TO 999 (any # greater than NUM_EFFECTS)
 //==============================================================
 
+//toggles for enabling buttons and EEPROM
 #define BUTTONS_ENABLE false
-#define EEPROM_ENABLE false
+#define EEPROM_ENABLE  false
+
+//total number of effects (change this if you add any!)
+#define NUM_EFFECTS    28
 
 //pin connections
-#define PIXEL_PIN       4
-#define BUTTON_1        1
-#define BUTTON_2        2
+#define PIXEL_PIN      4
+
+//buttons use interupt pins!
+#define BUTTON_1       1 //advances effects, double press goes into brightness mode (another single press relases)
+#define BUTTON_2       2 //locks cycle to current effect, if in brightness mode, changes brightness
 
 //EEPROM Addresses for settings
 //we want to store the brightness, current effect index, and the effect rotation toggle
@@ -51,9 +57,6 @@
 #define DEBOUNCE_TIME         100
 #define DOUBLE_PRESS_INTERVAL 400 //maximum time between presses for them to count as a double press
 
-//total number of effects (shange this if you add any!)
-#define NUM_EFFECTS           22
-
 //===================================================================
 //effects control vars
 
@@ -61,7 +64,7 @@ boolean direct = true; //direction setting for various effects
 byte effectIndex = 0; //number of effect that's currently active (will be read from EEPROM later)
 boolean effectRota = true; //effects rotation on / off flag
 boolean breakCurrentEffect = false; //flag for breaking out of effects that use multiple sub effects / loops
-boolean setBrightnessMode = false;
+boolean setBrightnessMode = false; //flag for switching into brightness change mode
 int buttonPressCount = 0; //used for counting double/triple button presses
 
 //time vars for checking button presses
@@ -78,15 +81,16 @@ volatile unsigned long interrupt_time = 0;
 
 //brightness vars
 byte brightnessIndex = 2; //initial brightness, index of brightnessLevels array
-//brightness levels array, max is 255, but 100 should be bright enough for amost all cases
+//brightness levels array, max is 255, but 150 should be bright enough for amost all cases
 //!!WARNING brightness is directly tied to power consumption, the max current per led is 60ma, this is for white at 255 brightness
-//if you actually run all the leds at max, the glasses will draw 4.75 amps, this is beyond the rating of the jst connectors
+//if you actually run all the leds at max, the rings will draw 3.66 amps, this is beyond the rating of the jst connectors
 const byte brightness[] = { 10, 30, 50, 100, 150 };
 const byte numBrightnessLevels = SIZE( brightness );
 
+//strip setup
 const uint16_t stripLength = 61;
 const uint8_t stripType = NEO_GRB + NEO_KHZ800;
-PixelStrip strip = PixelStrip(stripLength, PIXEL_PIN, stripType); //12 NEO_GRB
+PixelStrip strip = PixelStrip(stripLength, PIXEL_PIN, stripType);
 
 //Define some colors we'll use frequently
 const uint32_t white = strip.Color(255, 255, 255);
@@ -110,9 +114,10 @@ uint32_t pallet[9] = { 0, white, UCLAGold, UCLABlue, blue, yellow, red, green, p
 uint32_t christmasPallet[5] = { red, blue, green, yellow, purple };
 
 byte wavepattern[]  = { 6, 1 };
-byte wavepattern2[] = { 5, 4 };
+byte wavepattern2[] = { 4, 5 };
 byte wavepattern3[] = { 6, 7 };
 byte wavepattern4[] = { 8, 7 };
+byte *wavepatternContainer[] = { wavepattern, wavepattern2, wavepattern3, wavepattern4 };
 byte christmasWavePattern[5] = { 0, 1, 2, 3, 4};
 
 //below are spin patterns
@@ -138,15 +143,17 @@ byte christmasWavePattern[5] = { 0, 1, 2, 3, 4};
 //you define the matrix as: spinPatternName[(5 + 2) * 8] -> [ (number of segments + 2) * number of rows in pattern ]
 //you can also make patterns repeat using colorSpin, so you just have to define a single complete pattern (like I do with spinPatternWave)
 
-byte spinPattern4[(5 + 2) * 5] = { //0,1 5,6 8,9
-  0, 2, 1, 1, 0, 0, 0,
-  2, 3, 0, 1, 2, 0, 0,
+//4 spokes
+byte spinPattern1[(5 + 2) * 5] = {
+  0, 2, 1, 2, 0, 1, 0,
+  2, 3, 0, 1, 2, 1, 0,
   3, 4, 0, 0, 1, 2, 0,
   4, 5, 0, 0, 0, 1, 2,
-  5, 6, 2, 0, 0, 0, 2,
+  5, 6, 2, 0, 0, 1, 1,
 };
 
-byte spinPattern3[(5 + 2) * 5] = { //0,1 5,6 8,9
+//3 spokes
+byte spinPattern2[(5 + 2) * 5] = {
   0, 2, 1, 2, 0, 0, 0,
   2, 3, 0, 1, 2, 0, 0,
   3, 5, 0, 0, 1, 2, 0,
@@ -154,20 +161,12 @@ byte spinPattern3[(5 + 2) * 5] = { //0,1 5,6 8,9
   6, 8, 2, 0, 0, 0, 1,
 };
 
-//byte spinPattern2[(5 + 2) * 6] = { //0,1 5,6 8,9
-//  0, 2, 5, 4, 0, 0, 0,
-//  2, 3, 0, 5, 4, 0, 0,
-//  3, 4, 0, 0, 5, 4, 0,
-//  4, 5, 0, 0, 0, 5, 4,
-//  5, 6, 0, 0, 0, 0, 5,
-//  6, 12, 0, 0, 0, 0, 4,
-//};
-
-byte spinPattern22[(5 + 2) * 5] = { //0,1 5,6 8,9
-  0, 1, 1, 2, 0, 0, 0,
-  3, 4, 0, 1, 2, 0, 0,
-  6, 7, 0, 0, 1, 2, 0,
-  9, 10, 0, 0, 0, 1, 2,
+//2 spokes
+byte spinPattern3[(5 + 2) * 5] = {
+  0, 1,   1, 2, 0, 0, 0,
+  3, 4,   0, 1, 2, 0, 0,
+  6, 7,   0, 0, 1, 2, 0,
+  9, 10,  0, 0, 0, 1, 2,
   10, 12, 2, 0, 0, 0, 1,
 };
 
@@ -182,6 +181,7 @@ void setup() {
   if (EEPROM_ENABLE && BUTTONS_ENABLE) {
     brightnessIndex = EEPROM.read(BRIGHTNESS_ADDR);
     effectIndex = EEPROM.read(CUR_EFFECT_ADDR);
+    effectRota = EEPROM.read(EFFECT_ROT_ADDR);
   }
 
   //start a timer for writing to EEPROM
@@ -207,12 +207,12 @@ void setup() {
   strip.show();
   //Serial.begin(9600);
 
-  randomSeed(analogRead(0));
+  randomSeed(analogRead(1));
   strip.genRandPallet( randPallet, SIZE(randPallet) );
 }
 
 void loop() {
-  
+
   //if we're in brightness mode, we'll hop to the brightness adjust mode,
   //otherwise, run an effect
   if (setBrightnessMode) {
@@ -224,14 +224,19 @@ void loop() {
     resetBrightness();
     switch (effectIndex) {
       case 0:
-        strip.sparkSeg( ringSegments, 5, 1, 2, 0, 1, 0, 1, false, 100, 80 ); //three random colors, moving inwards
-        strip.sparkSeg( ringSegments, 5, 1, 2, 0, 1, 0, 1, false, 100, 80 ); //three random colors, moving inwards
-        strip.sparkSeg( ringSegments, 5, 1, 2, 0, 1, 0, 1, false, 100, 80 ); //three random colors, moving inwards
+        for (int i = 0; i < 3; i++) {
+          breakEffectCheck();
+          strip.sparkSeg( ringSegments, 5, 1, 2, 0, 1, 0, 1, false, 100, 80 ); //three random colors, moving inwards
+        }
+        break;
+      case 1:
         strip.sparkSeg( ringSegments, 5, 1, 1, 0, 2, 0, 1, false, 100, 80 ); //segmented rainbow sparks, blank Bg
+        break;
+      case 2:
+        strip.setRainbowOffset(50);
         strip.sparkSeg( ringSegments, 5, 1, 1, white, 1, 0, 5, true, 200, 80 ); //radial rainbow Bg, white sparks
         break;
-      //strip.segGradientCycle(ringSegments, SIZE(ringSegments), christmasWavePattern, SIZE(christmasWavePattern), christmasPallet, SIZE(christmasPallet), 5, 200, true, 130);
-      case 1:
+      case 3:
         for (int i = 0; i < 3; i++) {
           breakEffectCheck();
           strip.stripOff();
@@ -241,74 +246,63 @@ void loop() {
           strip.colorWipeRandom(2, 3, 5, 80, true, true, false);
         }
         break;
-      case 2:
-        //white leds, rainbow background, no trails, not scanner, zero eyeszie
+      case 4:
+        //white leds, rainbow background, no trails, not scanner, zero eyesize
+        strip.setRainbowOffsetCycle(40, false);
+        strip.runRainbowOffsetCycle(true);
         strip.patternSweepRand( 8, white, -1, 0, 0, true, 0, 1, 60, 320 );
         break;
-      case 3:
-        for (int i = 0; i < 4; i++) {
+      case 5:
+        for (int i = 0; i < 3; i++) {
           breakEffectCheck();
           strip.gradientCycleRand( 4, 6, 24 * 7, direct, 90);
           direct = !direct;
         }
         break;
-
-      //strip.simpleStreamerRand( 3, 0, 2, 2, 0, false, 24*4, 70);
-      case 4:
+      case 6:
         strip.colorSpinSimple( ringSegments, 1, 0, 0, 12, 1, 0, 0, 2, 24 * 5, 60 ); //rainbow half
         break;
-
-      case 5:
-        for (int i = 0; i < 4; i++) {
+      case 7:
+        for (int i = 0; i < 3; i++) {
           breakEffectCheck();
           strip.rainbow(35);
         }
         break;
-      case 6:
+      case 8:
         strip.theaterChaseRainbow(0, 70, 4, 2);
         break;
-
-      //  strip.stripOff();
-      //  for (int j = 0; j < 4; j++) {
-      //    if ((j % 2) == 0 ) {
-      //      breakEffectCheck();
-      //      strip.colorWipeRainbow(40, stripLength, true, false, false, true);
-      //      breakEffectCheck();
-      //      strip.colorWipe(0, stripLength, 40, true, false, true);
-      //    } else {
-      //      breakEffectCheck();
-      //      strip.colorWipeRainbow(40, stripLength, false, false, false, true);
-      //      breakEffectCheck();
-      //      strip.colorWipe(0, stripLength, 40, false, false, true);
-      //    }
-      //  }
-      case 7:
+      case 9:
         strip.colorSpinRainbow(ringSegments, true, 200, 70);
         break;
-      case 8:
-        strip.twinkle(pallet[wavepattern[0]], pallet[wavepattern[1]], 2, 60, 25, 10000);
-        strip.twinkle(pallet[wavepattern2[1]], pallet[wavepattern2[0]], 2, 60, 25, 10000);
-        strip.twinkle(pallet[wavepattern3[1]], pallet[wavepattern3[0]], 2, 60, 25, 10000);
-        strip.twinkle(pallet[wavepattern4[0]], pallet[wavepattern4[1]], 2, 60, 25, 10000);
-        strip.twinkleSet(0, christmasPallet, SIZE(christmasPallet), 2, 60, 15, 12000);
-        break;
-      case 9:
-        strip.setBrightness(brightnessIndex + 1);
-        //random colors, blank BG, 6 length trails, no scanner, color mode 1
-        for (int i = 0; i < 3; i++) {
-          breakEffectCheck();
-          strip.patternSweepRand( 3, -1, 0, 1, 5, false, 0, 1, 60, 24 * 8 );
-        }
-        break;
       case 10:
-        strip.setBrightness(brightnessIndex + 1);
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < SIZE(wavepatternContainer); i++) {
+          uint32_t tempPallet[2];
           breakEffectCheck();
-          //white leds, rainbow background, no trails, not scanner, zero eyeszie
-          strip.patternSweepRainbowRand( 2, 0, 1, 6, true, 0, 60, 24 * 8);
+          tempPallet[0] = pallet[ wavepatternContainer[i][0] ];
+          tempPallet[1] = pallet[ wavepatternContainer[i][1] ];
+          strip.twinkleSet(0, tempPallet, SIZE(tempPallet), 2, 60, 25, 10000);
+          //strip.twinkle(pallet[ wavepatternContainer[i][0] ], pallet[ wavepatternContainer[i][1] ], 2, 60, 25, 10000);
         }
         break;
       case 11:
+        strip.twinkleSet(0, christmasPallet, SIZE(christmasPallet), 2, 60, 15, 12000);
+        break;
+      case 12:
+        setTempBrightness(brightnessIndex + 1);
+        //random colors, blank BG, 6 length trails, no scanner, color mode 1
+        for (int i = 0; i < 3; i++) {
+          breakEffectCheck();
+          strip.patternSweepRand( 3, -1, 0, 1, 4, false, 0, 1, 70, 24 * 8 );
+        }
+        break;
+      case 13:
+        setTempBrightness(brightnessIndex + 1);
+        for (int i = 0; i < 2; i++) {
+          breakEffectCheck();
+          strip.patternSweepRainbowRand( 2, 0, 1, 6, true, 0, 60, 24 * 8);
+        }
+        break;
+      case 14:
         for (int j = 0; j < 8; j++) {
           breakEffectCheck();
           strip.colorWipeRainbowSeg(ringSegments, 140, 24 / 4, direct, true, true, true);
@@ -318,45 +312,43 @@ void loop() {
           direct = !direct;
         }
         break;
-      case 12:
+      case 15:
         strip.colorSpinSimple( ringSegments, 1, white, -1, 2, -1, 4, 0, 1, 24 * 7, 50 ); //white on rainbow Bg
         break;
-      case 13:
-        strip.waves( flowerSegments, pallet, SIZE( pallet ), wavepattern, SIZE(wavepattern), 15, false, 30, 20);
-        strip.waves( flowerSegments, pallet, SIZE( pallet ), wavepattern2, SIZE(wavepattern2), 15, false, 30, 20);
-        strip.waves( flowerSegments, pallet, SIZE( pallet ), wavepattern3, SIZE(wavepattern3), 15, false, 30, 20);
-        strip.waves( flowerSegments, pallet, SIZE( pallet ), wavepattern4, SIZE(wavepattern4), 15, false, 30, 20);
+      case 16:
+        for (int i = 0; i < SIZE(wavepatternContainer); i++) {
+          breakEffectCheck();
+          strip.waves( flowerSegments, pallet, SIZE( pallet ), wavepatternContainer[i], SIZE(wavepatternContainer[i]), 15, false, 30, 20);
+        }
+        break;
+      case 17:
         strip.waves( flowerSegments, christmasPallet, SIZE( christmasPallet ), christmasWavePattern, SIZE(christmasWavePattern), 20, true, 30, 20);
         break;
-
-      //  for (int j = 0; j < 256; j++) {
-      //    strip.randomColors(off.color32, true, strip.Wheel(j & 255), 50, 8, 110);
-      //  }
-      case 14:
+      case 18:
+        strip.colorSpinSimple( halfSegments, 1, 0, 0, 8, 1, 0, 0, 2, 24 * 9, 60 );
+        break;
+      case 19:
         for (int i = 0; i < 2; i++) {
-          breakEffectCheck();
-          strip.colorSpinSimple( halfSegments, 1, 0, 0, 8, 1, 0, 0, 2, 24 * 7, 60 );
           breakEffectCheck();
           strip.colorSpinSimple( halfSegments, 2, 0, 0, 8, 2, 8, 0, 1, 24 * 7, 60 );
           breakEffectCheck();
           strip.colorSpinSimple( halfSegments, 2, 0, 0, 4, 3, 4, 1, 1, 24 * 7, 60 );
         }
         break;
-      case 15:
+      case 20:
+        strip.setRainbowOffsetCycle(40, false);
+        strip.runRainbowOffsetCycle(true);
         strip.randomColors(-1, false, white, 70, 5, 15000);
         break;
+      case 21:
         for (int i = 0; i < 3; i++) {
+          breakEffectCheck();
           strip.genRandPallet( randPallet, SIZE(randPallet) );
-          strip.shiftingSea(randPallet, SIZE(randPallet), 20, 0, 2, 150, 60);
+          strip.shiftingSea(randPallet, SIZE(randPallet), 20, 0, 2, 150, 40);
         }
-      //strip.stripOff();
-      //strip.setBrightness(90);
-      // strip.rainbowSingleWave( starSegments, 1, 10, 2, 20, 15);
-      //strip.setBrightness(normalBrightness);
-
-      //strip.doRepeatSimplePattern(simpleRepeatPattern, SIZE(simpleRepeatPattern), pallet, SIZE(pallet), 20, 25, 20, false);
-      case 16:
-        strip.setBrightness(brightnessIndex - 1);
+        break;
+      case 22:
+        setTempBrightness(brightnessIndex - 1);
         for (int i = 0; i < SIZE(christmasPallet) * 4; i++) {
           int palletSize = SIZE(christmasPallet);
           breakEffectCheck();
@@ -364,21 +356,11 @@ void loop() {
           direct = !direct;
         }
         break;
-      //        randPallet[1] = white;
-      //        randPallet[2] = white;
-      //        randPallet[0] = 0;
-      //        strip.colorSpin(ringSegments, spinPattern22, SIZE(spinPattern22), randPallet, -2, 1, true, 200, 60);
-      case 17:
+      case 23:
         strip.rainbowWave(ringSegments, 50, true, 5, 50);
         break;
-
-      case 18:
+      case 24:
         for (int i = 0; i < 2; i++) {
-          strip.genRandPallet( randPallet, SIZE(randPallet) );
-          randPallet[0] = 0;
-          breakEffectCheck();
-          strip.colorSpin(ringSegments, spinPattern22, SIZE(spinPattern22), randPallet, 0, 1, true, 200, 60);
-
           strip.genRandPallet( randPallet, SIZE(randPallet) );
           randPallet[0] = 0;
           breakEffectCheck();
@@ -387,29 +369,39 @@ void loop() {
           strip.genRandPallet( randPallet, SIZE(randPallet) );
           randPallet[0] = 0;
           breakEffectCheck();
-          strip.colorSpin(ringSegments, spinPattern4, SIZE(spinPattern4), randPallet, 0, 1, true, 200, 60);
+          strip.colorSpin(ringSegments, spinPattern2, SIZE(spinPattern2), randPallet, 0, 1, true, 200, 60);
+
+          strip.genRandPallet( randPallet, SIZE(randPallet) );
+          randPallet[0] = 0;
+          breakEffectCheck();
+          strip.colorSpin(ringSegments, spinPattern1, SIZE(spinPattern1), randPallet, 0, 1, true, 200, 60);
         }
         break;
-      case 19:
+      case 25:
         for (int i = 0; i < 3; i++) {
           breakEffectCheck();
           strip.patternSweepRepeatRand(3, 0, 0, 2, 3, false, false, 0, 0, 1, 65, 200 );
         }
         break;
-      case 20:
-        for (int j = 0; j < 8; j++) {
+      case 26:
+        for (int i = 0; i < 8; i++) {
           breakEffectCheck();
-          strip.colorWipeRandomSeg(ringSegments, random(1, 4), 3, 24 / 3, 150, direct, false, true);
+          int mode = 1;
+          if ( i % 2 == 0) {
+            mode = 1;
+          } else {
+            mode = 3;
+          }
+          strip.colorWipeRandomSeg(ringSegments, mode, 3, 24 / 3, 150, direct, false, true);
           breakEffectCheck();
           strip.colorWipeSeg(ringSegments, 0,  24 / 3, 150, direct, false, true);
           direct = !direct;
         }
         break;
-      case 21:
+      case 27:
         strip.randomColorSet(0, true, christmasPallet, SIZE(christmasPallet), 100, 3, 15000);
         break;
       default:
-        incrementEffectIndex();
         break;
     }
     //if effectRota is true we'll advance to the effect index
@@ -417,8 +409,38 @@ void loop() {
       incrementEffectIndex();
     }
   }
+
+  //unused effects
+
+  //strip.segGradientCycle(ringSegments, SIZE(ringSegments), christmasWavePattern, SIZE(christmasWavePattern), christmasPallet, SIZE(christmasPallet), 5, 200, true, 130);
+
+  //strip.simpleStreamerRand( 3, 0, 2, 2, 0, false, 24*4, 70);
+
+  //  for (int j = 0; j < 4; j++) {
+  //    if ((j % 2) == 0 ) {
+  //      breakEffectCheck();
+  //      strip.colorWipeRainbow(40, stripLength, true, false, false, true);
+  //      breakEffectCheck();
+  //      strip.colorWipe(0, stripLength, 40, true, false, true);
+  //    } else {
+  //      breakEffectCheck();
+  //      strip.colorWipeRainbow(40, stripLength, false, false, false, true);
+  //      breakEffectCheck();
+  //      strip.colorWipe(0, stripLength, 40, false, false, true);
+  //    }
+  //  }
+
+  //setTempBrightness(brightnessIndex + 1);
+  // strip.rainbowSingleWave( starSegments, 1, 10, 2, 20, 15);
+
+  //strip.doRepeatSimplePattern(simpleRepeatPattern, SIZE(simpleRepeatPattern), pallet, SIZE(pallet), 20, 25, 20, false);
+
+  //  for (int j = 0; j < 256; j++) {
+  //    strip.randomColors(off.color32, true, strip.Wheel(j & 255), 50, 8, 110);
+  //  }
 }
 
+//switch to the next effect, looping when at the end
 void incrementEffectIndex() {
   effectIndex = (effectIndex + 1) % NUM_EFFECTS;
   //if the button has been pressed, increment the pattern counter
@@ -432,18 +454,21 @@ uint32_t RC() {
   return strip.randColor();
 }
 
-void tempBrightness(int index){
+//sets the current brightness to index value in brightness array
+//does not actually change brightness index, so it can be reset later
+void setTempBrightness(int index) {
   if (index < numBrightnessLevels && index > 0) {
     strip.setBrightness(brightness[index]);
   }
 }
 
-void resetBrightness(){
+//resets brightness to current brightnessIndex
+void resetBrightness() {
   strip.setBrightness(brightness[brightnessIndex]);
 }
 
 //handles both short and double presses
-//double presses switch to the next pattern, while short presses restart the current pattern
+//double presses switch to brightness adjust mode, while short presses move to the next effect
 //counts button presses using a counter
 //if the button is pressed multiple times within DOUBLE_PRESS_INTERVAL, the counter is incremented
 //otherwise, the counter is reset to 0
@@ -465,6 +490,8 @@ void buttonHandle1() {
   }
 }
 
+//lock effect rotation on/off
+//if in brightness mode, changes brightess
 void buttonHandle2() {
   //record to current time, so we can check subsequent presses
   interrupt_time = millis();
@@ -489,8 +516,7 @@ void adjustBrighness() {
 
 //does actions based on the number of button presses
 //single press restarts the current effect
-//double press advances to the next effect
-//triple press goes into brightness mode (single press releases it)
+//double press goes into brightness adjust mode (another single press releases it
 void handlePresses() {
   if (buttonPressCount == 0) {
     strip.pixelStripStopPattern = true;
