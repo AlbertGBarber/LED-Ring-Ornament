@@ -19,31 +19,30 @@
 //OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //THE SOFTWARE.
 
-//Code intended to run on common 8bit Arduino 5V boards (Nano, Uno, Pro-Mini, etc)
+//code intended to run on esp8266, Wemos D1 mini
 //requires lastest version of adafruit neopixel library (use the library manager)
-
 #include <PixelStrip.h>
 #include "segmentDefs.h"
 #include <EEPROM.h>
-#include <TimerOne.h>
-
-//==============================================================
-//YOU CAN SKIP EFFECTS BY CHANGING THEIR CASE VALUE TO 999 (any # greater than NUM_EFFECTS)
-//==============================================================
+#include <Ticker.h>
 
 //toggles for enabling buttons and EEPROM
-#define BUTTONS_ENABLE false
-#define EEPROM_ENABLE  false
+#define BUTTONS_ENABLE  false
+#define EEPROM_ENABLE   false
 
 //total number of effects (change this if you add any!)
-#define NUM_EFFECTS    28
+#define NUM_EFFECTS     28
 
 //pin connections
-#define PIXEL_PIN      4
+#define PIXEL_PIN       D8
+#define BUTTON_1        D6
+#define BUTTON_2        D7
+#define BUTTON_3        D5
 
-//buttons use interupt pins!
-#define BUTTON_1       1 //advances effects, double press goes into brightness mode (another single press relases)
-#define BUTTON_2       2 //locks cycle to current effect, if in brightness mode, changes brightness
+//below vars are placeholders for possible bluetooth and mic board connections
+#define MIC_IN          A0
+#define RX_BT           D1
+#define TX_BT           D2
 
 //EEPROM Addresses for settings
 //we want to store the brightness, current effect index, and the effect rotation toggle
@@ -51,25 +50,14 @@
 #define BRIGHTNESS_ADDR 2 //brightness address
 #define CUR_EFFECT_ADDR 0 //index of current effect address
 #define EFFECT_ROT_ADDR 1 //effect rotaion bool address
-#define EEPROM_COM_TIME 5000000 //ms
+#define EEPROM_COM_TIME 3000 //ms
 
-//button debounce, double press values, in milliseconds
-#define DEBOUNCE_TIME         100
-#define DOUBLE_PRESS_INTERVAL 400 //maximum time between presses for them to count as a double press
-
-//===================================================================
 //effects control vars
-
-boolean direct = true; //direction setting for various effects
 byte effectIndex = 0; //number of effect that's currently active (will be read from EEPROM later)
 boolean effectRota = true; //effects rotation on / off flag
+boolean effectsStop = false; //stop all effects flag
+boolean direct = true; //use for setting direction of effects
 boolean breakCurrentEffect = false; //flag for breaking out of effects that use multiple sub effects / loops
-boolean setBrightnessMode = false; //flag for switching into brightness change mode
-int buttonPressCount = 0; //used for counting double/triple button presses
-
-//time vars for checking button presses
-volatile unsigned long last_interrupt_time = 0;
-volatile unsigned long interrupt_time = 0;
 
 //macro for implementing break for effects with multiple sub effects
 #define breakEffectCheck() ({ \
@@ -81,36 +69,42 @@ volatile unsigned long interrupt_time = 0;
 
 //brightness vars
 byte brightnessIndex = 2; //initial brightness, index of brightnessLevels array
-//brightness levels array, max is 255, but 150 should be bright enough for amost all cases
+//brightness levels array, max is 255, but 100 should be bright enough for amost all cases
 //!!WARNING brightness is directly tied to power consumption, the max current per led is 60ma, this is for white at 255 brightness
-//if you actually run all the leds at max, the rings will draw 3.66 amps, this is beyond the rating of the jst connectors
-const byte brightness[] = { 10, 30, 50, 100, 150 };
-const byte numBrightnessLevels = SIZE( brightness );
+//if you actually run all the leds at max, the glasses will draw 4.75 amps, this is beyond the rating of the jst connectors
+const byte brightnessLevels[] = { 10, 30, 50, 100, 150 };
+const byte numBrightnessLevels = SIZE( brightnessLevels );
 
-//strip setup
+//Strip definitions
 const uint16_t stripLength = 61;
 const uint8_t stripType = NEO_GRB + NEO_KHZ800;
 PixelStrip strip = PixelStrip(stripLength, PIXEL_PIN, stripType);
 
+//initilize ticker objects
+Ticker EEPROMcommiter; //timer for commiting data to EEPRROM
+
 //Define some colors we'll use frequently
-const uint32_t white = strip.Color(255, 255, 255);
+const uint32_t white =    strip.Color(255, 255, 255);
 const uint32_t UCLAGold = strip.Color(254, 187, 54);
 const uint32_t UCLABlue = strip.Color(83, 104, 149);
-const uint32_t red = strip.Color(255, 0, 0);
-const uint32_t orange = strip.Color(255, 43, 0);
+const uint32_t off =      strip.Color( 0, 0, 0 );
+const uint32_t red =      strip.Color(255, 0, 0);
+const uint32_t orange =   strip.Color(255, 43, 0);
 const uint32_t ltOrange = strip.Color(255, 143, 0);
-const uint32_t yellow = strip.Color(255, 255, 0);
-const uint32_t green = strip.Color(0, 128, 0);
-const uint32_t blue = strip.Color(0, 0, 255);
-const uint32_t indigo = strip.Color( 75, 0, 130);
-const uint32_t violet = strip.Color(238, 130, 238);
-const uint32_t purple = strip.Color(123, 7, 197);
-const uint32_t pink = strip.Color(225, 0, 127);
+const uint32_t yellow =   strip.Color(255, 255, 0);
+const uint32_t ltYellow = strip.Color(255, 255, 100);
+const uint32_t green =    strip.Color(0, 128, 0);
+const uint32_t blue =     strip.Color(0, 0, 255);
+const uint32_t indigo =   strip.Color( 75, 0, 130);
+const uint32_t violet =   strip.Color(238, 130, 238);
+const uint32_t purple =   strip.Color(123, 7, 197);
+const uint32_t pink =     strip.Color(225, 0, 127);
 
 //define pallet array, contains 32bit representations of all colors used in patterns
-uint32_t pallet[9] = { 0, white, UCLAGold, UCLABlue, blue, yellow, red, green, purple };
-//                   {-0-, -1-, ----2---, ----3----, --4--, --5--, -6--, --7-, --8--- }
+uint32_t pallet[9] = { off, white, UCLAGold, UCLABlue, blue, yellow, red, green, purple };
+//                   { -0-, --1--, ---2----, ----3---, -4--, ---5--, -6-, --7--, --8-- }
 
+//pallet to match typical fairy light colors
 uint32_t christmasPallet[5] = { red, blue, green, yellow, purple };
 
 byte wavepattern[]  = { 6, 1 };
@@ -173,56 +167,145 @@ byte spinPattern3[(5 + 2) * 5] = {
 //for simple repeart drawing functions
 byte simpleRepeatPattern[5] = {8, 6, 7, 4, 5}; //{ 4, 0, 5, 0, 6, 0, 7, 0};
 
-uint32_t randPallet[5];
+//storage for pallets we'll generate on the fly
+uint32_t randPallet[5]; //pallet for random colors (length sets number of colors used by randomColors effect)
+
+//callback routine for committing EEPROM data
+//EEPRROM has limited writes, so we want to commit all the writes after a delay
+//this allows the data to change while the user is pressing buttons, and we'll only commit
+//the final values once they are done
+void ICACHE_RAM_ATTR commitEEPROM() {
+  EEPROM.commit();
+}
+
+//triggered by button 1, stops the current pattern, and switches to the next one, wrapping if needed
+//also stores effect index in eeprom
+//if button 2 is also being held, turn effects on / off
+void ICACHE_RAM_ATTR nextEffect() {
+  strip.pixelStripStopPattern = true; //stop the current pattern
+  breakCurrentEffect = true; //set flag to break out of current case statement
+  //if we are rotating to the next effect, reset all the segment directions
+  //and store the next effect index in eeprom
+  if (effectRota) {
+    resetSegDirections();
+    EEPROM.write(CUR_EFFECT_ADDR, (effectIndex + 1) % NUM_EFFECTS);
+    //stop any other commit timers and start a new one
+    EEPROMcommiter.detach();
+    EEPROMcommiter.once_ms(EEPROM_COM_TIME, commitEEPROM);
+  }
+  //if button 2 is being held, stop/start the effect cycle
+  //otherwise increase the index to start the next effect
+  if ( digitalRead(BUTTON_2) == LOW) {
+    effectsStop = !effectsStop;
+  }
+}
+
+//triggered by button 2, turns effect rotation on / off
+//also stores the state in eeprom
+//(if rotation is off, the current effect will be repeated continuously)
+//if button 1 is also being held, turn effects on / off
+void ICACHE_RAM_ATTR effectRotaToggle() {
+  if ( digitalRead(BUTTON_1) == LOW) {
+    strip.pixelStripStopPattern = true;
+    effectsStop = !effectsStop;
+  } else {
+    effectRota = !effectRota;
+    EEPROM.write(EFFECT_ROT_ADDR, effectRota);
+    //stop any other commit timers and start a new one
+    EEPROMcommiter.detach();
+    EEPROMcommiter.once_ms(EEPROM_COM_TIME, commitEEPROM);
+  }
+}
+
+//triggered by button 3, sets the strip brightness to the next
+//also stores the brighness index in eeprom
+//brightness level in the brightnessLevels array (wrapping to the start if needed)
+void ICACHE_RAM_ATTR brightnessAdjust() {
+  brightnessIndex = (brightnessIndex + 1) % numBrightnessLevels;
+  strip.setBrightness( brightnessLevels[ brightnessIndex ] );
+  EEPROM.write(BRIGHTNESS_ADDR, brightnessIndex);
+  //stop any other commit timers and start a new one
+  EEPROMcommiter.detach();
+  EEPROMcommiter.once_ms(EEPROM_COM_TIME, commitEEPROM);
+}
+
+//increments the effect index (wrapping if needed)
+void incrementEffectIndex() {
+  strip.runRainbowOffsetCycle(false);
+  strip.setRainbowOffset(0);
+  effectIndex = (effectIndex + 1) % NUM_EFFECTS;
+}
+
+//resets all the segments to their default directions (as set in segmentDefs)
+void resetSegDirections() {
+
+}
 
 void setup() {
-
-  //read and set pattern/brightness values from EEPROM
-  if (EEPROM_ENABLE && BUTTONS_ENABLE) {
-    brightnessIndex = EEPROM.read(BRIGHTNESS_ADDR);
-    effectIndex = EEPROM.read(CUR_EFFECT_ADDR);
-    effectRota = EEPROM.read(EFFECT_ROT_ADDR);
-  }
-
-  //start a timer for writing to EEPROM
-  //we stop it right away, as we have nothing new to write to EEPROM initially
-  Timer1.initialize(EEPROM_COM_TIME);
-  Timer1.attachInterrupt(writeEEPROM);
-  Timer1.stop();
+  //initalize the led strip, and set the starting brightness
+  strip.begin();
 
   if (BUTTONS_ENABLE) {
-    //setup the button pin
     pinMode(BUTTON_1, INPUT_PULLUP);
-    //due to how my pixelStrip lib is written, button presses must be captured using interrupts
-    attachInterrupt(digitalPinToInterrupt(BUTTON_1), buttonHandle1, FALLING);
-
-    //setup the button pin
     pinMode(BUTTON_2, INPUT_PULLUP);
-    //due to how my pixelStrip lib is written, button presses must be captured using interrupts
-    attachInterrupt(digitalPinToInterrupt(BUTTON_2), buttonHandle2, FALLING);
+    pinMode(BUTTON_3, INPUT_PULLUP);
+    //because of the way my library currently works, effects occupy the processor until they end
+    //so to break out of an effect, or change sytem values, we need to use interrupts
+    attachInterrupt(digitalPinToInterrupt(BUTTON_1), nextEffect, FALLING);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_2), effectRotaToggle, FALLING);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_3), brightnessAdjust, FALLING);
   }
 
-  strip.begin();
-  strip.setBrightness(brightness[brightnessIndex]);
-  strip.show();
-  //Serial.begin(9600);
+  if (EEPROM_ENABLE && BUTTONS_ENABLE) {
+    // EEPROM Initialization
+    EEPROM.begin(512);
 
-  randomSeed(analogRead(1));
+    //read EEPROM values for current effect, brightness, and effect rotation
+    effectRota = EEPROM.read(EFFECT_ROT_ADDR);
+    brightnessIndex = EEPROM.read(BRIGHTNESS_ADDR);
+    effectIndex = EEPROM.read(CUR_EFFECT_ADDR);
+  }
+
+  strip.setBrightness( brightnessLevels[brightnessIndex] );
+  strip.show();
+  //Serial.begin(115200);
+
+  randomSeed(ESP.getCycleCount()); //generate a random seed
+  //fill in our random pallet
   strip.genRandPallet( randPallet, SIZE(randPallet) );
 }
 
+//!! If you want to change the main loop code, please read all the comments below and in the loop !!
+//To remove an effect, simply change its case # to anything greater than the total number of effects (999 for ex)
+//if you want to know about certain effects, please see comments in the library for said effect
+//if you want to know how segments work, please see comments in segmentSet.h
+
+//The main loop of the program, works as follows:
+//if effectsStop is true, effects are "off", so we won't try to start the next effect
+//otherwise we jump to the effect matching the effectIndex value using a switch statment
+//we also "clean up" a bit by reseting direct to true and the breakCurrentEffect flag to false
+//if we don't find an effect with the effectIndex, we increment the effectIndex until we do
+//while an effect is running, button inputs can either lock the effect or skip to the next effect
+//if we lock the effect (set effectRota to false), we do not increment effectIndex when the effect ends, essentially restarting the effect (with new colors if they're randomly choosen)
+//if the effect is skipped, we set strip.pixelStripStopPattern and breakCurrentEffect to true
+//strip.pixelStripStopPattern will stop the current effect, and breakCurrentEffect will break out of the current switch statement if needed (the switch case has more than one effect)
+//once the effect ends (either naturally or from a button press), we incremented effectIndex (as long as effectRota is set true)
+//and jump to the top of the main loop
+
 void loop() {
 
-  //if we're in brightness mode, we'll hop to the brightness adjust mode,
-  //otherwise, run an effect
-  if (setBrightnessMode) {
-    adjustBrighness();
-  } else {
-    direct = !direct; //reverse the effect direction
-    strip.stripOff();
+  if (!effectsStop) { //if effectsStop is true, we won't display any effect
+    direct = !direct;
     breakCurrentEffect = false;
     resetBrightness();
-    switch (effectIndex) {
+    //switch statment contains all effects
+    //I'm not going to comment each one, as they're hard to describe
+    //if an case has a loop, it generally means the effect will by run multiple times in diff directions
+    //these will contain breakEffectCheck(); which will breakout of the case if the effect is skipped by button input
+    //segmentName.flipSegDirectionEvery(1, true) means that the direction of the names segments will be reversed
+    //this is used to change the direction of colorSpin effects
+
+    switch (effectIndex) { //select the next effect based on the effectIndex
       case 0:
         for (int i = 0; i < 3; i++) {
           breakEffectCheck();
@@ -380,7 +463,7 @@ void loop() {
       case 25:
         for (int i = 0; i < 3; i++) {
           breakEffectCheck();
-          strip.patternSweepRepeatRand(3, 0, 0, 2, 3, false, false, 0, 0, 1, 65, 200 );
+          strip.patternSweepRepeatRand(3, 0, 0, 2, 3, false, false, 0, 0, 10, 65, 200 );
         }
         break;
       case 26:
@@ -408,6 +491,7 @@ void loop() {
     if (effectRota) {
       incrementEffectIndex();
     }
+    strip.stripOff(); //clear the strip for the next effect
   }
 
   //unused effects
@@ -440,15 +524,6 @@ void loop() {
   //  }
 }
 
-//switch to the next effect, looping when at the end
-void incrementEffectIndex() {
-  effectIndex = (effectIndex + 1) % NUM_EFFECTS;
-  //if the button has been pressed, increment the pattern counter
-  //(and reset the rainbow offsets and stop any active rainbow cycles)
-  strip.runRainbowOffsetCycle(false);
-  strip.setRainbowOffset(0);
-}
-
 //a quick shortening of the random color function, just to reduce the pattern function calls more readable
 uint32_t RC() {
   return strip.randColor();
@@ -458,84 +533,11 @@ uint32_t RC() {
 //does not actually change brightness index, so it can be reset later
 void setTempBrightness(int index) {
   if (index < numBrightnessLevels && index > 0) {
-    strip.setBrightness(brightness[index]);
+    strip.setBrightness(brightnessLevels[index]);
   }
 }
 
 //resets brightness to current brightnessIndex
 void resetBrightness() {
-  strip.setBrightness(brightness[brightnessIndex]);
-}
-
-//handles both short and double presses
-//double presses switch to brightness adjust mode, while short presses move to the next effect
-//counts button presses using a counter
-//if the button is pressed multiple times within DOUBLE_PRESS_INTERVAL, the counter is incremented
-//otherwise, the counter is reset to 0
-void buttonHandle1() {
-  //record to current time, so we can check subsequent presses
-  interrupt_time = millis();
-  if (interrupt_time - last_interrupt_time > DEBOUNCE_TIME) { // ignores interupts for x milliseconds to debounce
-
-    //if the last press was within DOUBLE_PRESS_INTERVAL milliseconds of a previous one, we've had a multipress, increment the counter
-    //otherwise, reset the counter
-    if (interrupt_time - last_interrupt_time < DOUBLE_PRESS_INTERVAL) {
-      buttonPressCount++;
-    } else {
-      buttonPressCount = 0;
-    }
-    last_interrupt_time = interrupt_time;
-    //call function to determine what action to take based on the button count
-    handlePresses();
-  }
-}
-
-//lock effect rotation on/off
-//if in brightness mode, changes brightess
-void buttonHandle2() {
-  //record to current time, so we can check subsequent presses
-  interrupt_time = millis();
-  if (interrupt_time - last_interrupt_time > DEBOUNCE_TIME) { // ignores interupts for x milliseconds to debounce
-    last_interrupt_time = interrupt_time;
-    if (setBrightnessMode) {
-      brightnessIndex = (brightnessIndex + 1) % numBrightnessLevels;
-      Timer1.resume(); //resume the timer to write the new brightness value to EEPROM
-    } else {
-      effectRota = !effectRota;
-      Timer1.resume();
-    }
-  }
-}
-
-//mode for setting the brightness,
-//sets the sword to solid blue, and changes it's brightness based on the potentiometer readings
-void adjustBrighness() {
-  strip.setBrightness(brightness[brightnessIndex]);
-  strip.fillStrip(blue, true);
-}
-
-//does actions based on the number of button presses
-//single press restarts the current effect
-//double press goes into brightness adjust mode (another single press releases it
-void handlePresses() {
-  if (buttonPressCount == 0) {
-    strip.pixelStripStopPattern = true;
-    breakCurrentEffect = true;
-    Timer1.resume(); //resume the timer to write the new pattern value to EEPROM
-    setBrightnessMode = false;
-  } else if (buttonPressCount == 1) {
-    //if the button is triple pressed, we want to jump into setting the brightness
-    setBrightnessMode = true;
-  }
-}
-
-//update the values in EEPROM, if enabled
-//then stop the timer so we only update them once
-void writeEEPROM() {
-  if (EEPROM_ENABLE) {
-    EEPROM.update(CUR_EFFECT_ADDR, effectIndex);
-    EEPROM.update(BRIGHTNESS_ADDR, brightnessIndex);
-    EEPROM.update(EFFECT_ROT_ADDR, effectRota);
-    Timer1.stop();
-  }
+  strip.setBrightness(brightnessLevels[brightnessIndex]);
 }
