@@ -316,6 +316,7 @@ void loop() {
         strip.sparkSeg( ringSegments, 5, 1, 1, 0, 2, 0, 1, false, 100, 80 ); //segmented rainbow sparks, blank Bg
         break;
       case 2:
+        setTempBrightness(brightnessIndex - 1);
         strip.setRainbowOffset(50);
         strip.sparkSeg( ringSegments, 5, 1, 1, white, 1, 0, 5, true, 200, 80 ); //radial rainbow Bg, white sparks
         break;
@@ -330,9 +331,11 @@ void loop() {
         }
         break;
       case 4:
+        setTempBrightness(brightnessIndex - 1);
         //white leds, rainbow background, no trails, not scanner, zero eyesize
         strip.setRainbowOffsetCycle(40, false);
         strip.runRainbowOffsetCycle(true);
+        setTempBrightness(brightnessIndex - 1);
         strip.patternSweepRand( 8, white, -1, 0, 0, true, 0, 1, 60, 320 );
         break;
       case 5:
@@ -375,7 +378,7 @@ void loop() {
         //random colors, blank BG, 6 length trails, no scanner, color mode 1
         for (int i = 0; i < 3; i++) {
           breakEffectCheck();
-          strip.patternSweepRand( 3, -1, 0, 1, 4, false, 0, 1, 70, 24 * 8 );
+          strip.patternSweepRand( 3, -1, 0, 1, 3, false, 0, 1, 70, 24 * 8 );
         }
         break;
       case 13:
@@ -396,12 +399,13 @@ void loop() {
         }
         break;
       case 15:
+        setTempBrightness(brightnessIndex - 1);
         strip.colorSpinSimple( ringSegments, 1, white, -1, 2, -1, 4, 0, 1, 24 * 7, 50 ); //white on rainbow Bg
         break;
       case 16:
         for (int i = 0; i < SIZE(wavepatternContainer); i++) {
           breakEffectCheck();
-          strip.waves( flowerSegments, pallet, SIZE( pallet ), wavepatternContainer[i], SIZE(wavepatternContainer[i]), 15, false, 30, 20);
+          strip.waves( flowerSegments, pallet, SIZE( pallet ), wavepatternContainer[i], 2, 15, false, 30, 20);
         }
         break;
       case 17:
@@ -421,6 +425,7 @@ void loop() {
       case 20:
         strip.setRainbowOffsetCycle(40, false);
         strip.runRainbowOffsetCycle(true);
+        setTempBrightness(brightnessIndex - 1);
         strip.randomColors(-1, false, white, 70, 5, 15000);
         break;
       case 21:
@@ -463,7 +468,7 @@ void loop() {
       case 25:
         for (int i = 0; i < 3; i++) {
           breakEffectCheck();
-          strip.patternSweepRepeatRand(3, 0, 0, 2, 3, false, false, 0, 0, 10, 65, 200 );
+          strip.patternSweepRepeatRand(3, 0, 0, 2, 3, false, false, 0, 0, 1, 65, 200 );
         }
         break;
       case 26:

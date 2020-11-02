@@ -234,6 +234,7 @@ void loop() {
         strip.sparkSeg( ringSegments, 5, 1, 1, 0, 2, 0, 1, false, 100, 80 ); //segmented rainbow sparks, blank Bg
         break;
       case 2:
+      setTempBrightness(brightnessIndex - 1);
         strip.setRainbowOffset(50);
         strip.sparkSeg( ringSegments, 5, 1, 1, white, 1, 0, 5, true, 200, 80 ); //radial rainbow Bg, white sparks
         break;
@@ -249,6 +250,7 @@ void loop() {
         break;
       case 4:
         //white leds, rainbow background, no trails, not scanner, zero eyesize
+        setTempBrightness(brightnessIndex - 1);
         strip.setRainbowOffsetCycle(40, false);
         strip.runRainbowOffsetCycle(true);
         strip.patternSweepRand( 8, white, -1, 0, 0, true, 0, 1, 60, 320 );
@@ -314,6 +316,7 @@ void loop() {
         }
         break;
       case 15:
+      setTempBrightness(brightnessIndex - 1);
         strip.colorSpinSimple( ringSegments, 1, white, -1, 2, -1, 4, 0, 1, 24 * 7, 50 ); //white on rainbow Bg
         break;
       case 16:
@@ -339,6 +342,7 @@ void loop() {
       case 20:
         strip.setRainbowOffsetCycle(40, false);
         strip.runRainbowOffsetCycle(true);
+        setTempBrightness(brightnessIndex - 1);
         strip.randomColors(-1, false, white, 70, 5, 15000);
         break;
       case 21:
