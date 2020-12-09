@@ -309,16 +309,16 @@ void loop() {
       case 0:
         for (int i = 0; i < 3; i++) {
           breakEffectCheck();
-          strip.sparkSeg( ringSegments, 5, 1, 2, 0, 1, 0, 1, false, 100, 80 ); //three random colors, moving inwards
+          strip.sparkSeg( ringSegments, 5, 1, 2, 0, 1, 0, 1, true, false, 100, 80 ); //three random colors, moving inwards
         }
         break;
       case 1:
-        strip.sparkSeg( ringSegments, 5, 1, 1, 0, 2, 0, 1, false, 100, 80 ); //segmented rainbow sparks, blank Bg
+        strip.sparkSeg( ringSegments, 5, 1, 1, 0, 2, 0, 1, true, false, 100, 80 ); //segmented rainbow sparks, blank Bg
         break;
       case 2:
         setTempBrightness(brightnessIndex - 1);
         strip.setRainbowOffset(50);
-        strip.sparkSeg( ringSegments, 5, 1, 1, white, 1, 0, 5, true, 200, 80 ); //radial rainbow Bg, white sparks
+        strip.sparkSeg( ringSegments, 5, 1, 1, white, 1, 0, 5, false, true, 200, 80 ); //radial rainbow Bg, white sparks
         break;
       case 3:
         for (int i = 0; i < 3; i++) {
